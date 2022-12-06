@@ -1,10 +1,11 @@
 use crate::{
     config::KBConfig,
+    effects::{LedEffect, LedState},
     protocol::{ProtocolMessage, RgbSetFullMessage, RgbSetMessage, RAW_EPSIZE},
 };
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use hidapi::HidDevice;
-use palette::Hsv;
+use palette::{Hsv, Hsva};
 use std::{
     collections::HashMap,
     sync::{
@@ -17,8 +18,11 @@ use std::{
 
 #[derive(Default, Clone)]
 pub struct KeyState {
+    // last time the down event was sent for this key
     pub last_down: Option<Instant>,
-    pub is_down: bool,
+    // last time this key was not up
+    pub last_pressed: Option<Instant>,
+    pub is_pressed: bool,
 }
 
 #[derive(Default, Clone)]
@@ -26,6 +30,7 @@ pub struct HIDThreadState {
     pub delta_update: f32,
     pub delta_frame: f32,
     pub matrix: Vec<Vec<KeyState>>,
+    pub led_state: Vec<Hsva>,
     pub layer_state: u8,
 }
 
@@ -92,14 +97,26 @@ impl HIDThread {
 
         let layout = kb_config.layout();
 
+        let mut effects: Vec<Box<dyn LedEffect>> =
+            vec![Box::new(crate::effects::Rainbow1Effect::default())];
+
         let mut matrix = vec![
             vec![KeyState::default(); kb_config.columns() as usize];
             kb_config.rows() as usize
         ];
 
-        let mut layer_state: u8 = 0;
+        let mut led_state = vec![LedState::default(); kb_config.led_count().into()];
 
-        let mut hue: f32 = 0.0;
+        for key in &layout.layout {
+            let led_idx = kb_config.matrix[key.matrix.0 as usize][key.matrix.1 as usize];
+            if led_idx < 0 {
+                continue;
+            }
+
+            led_state[led_idx as usize].key = Some(key);
+        }
+
+        let mut layer_state: u8 = 0;
 
         while !cancel.load(Ordering::Relaxed) {
             // prep
@@ -110,11 +127,16 @@ impl HIDThread {
                 match ProtocolMessage::read_buffer(&recv_buffer, size) {
                     Some(ProtocolMessage::Press(press)) => {
                         let key_state = &mut matrix[press.row as usize][press.col as usize];
-                        key_state.is_down = press.pressed;
 
                         if press.pressed {
-                            key_state.last_down = Some(Instant::now());
+                            if !key_state.is_pressed {
+                                key_state.last_down = Some(Instant::now());
+                            }
+
+                            key_state.last_pressed = Some(Instant::now());
                         }
+
+                        key_state.is_pressed = press.pressed;
                     }
                     Some(ProtocolMessage::Layer(layer)) => {
                         layer_state = layer.layer_state;
@@ -126,22 +148,26 @@ impl HIDThread {
             if last_frame.elapsed() >= Duration::from_secs_f32(wait_frame) {
                 delta_frame = last_frame.elapsed().as_secs_f32();
 
-                let mut colors: HashMap<u8, Hsv> = HashMap::new();
+                let pre_state = led_state.clone();
 
-                for key in &layout.layout {
-                    let idx = kb_config.matrix[key.matrix.0 as usize][key.matrix.1 as usize];
-                    if idx < -1 {
-                        continue;
-                    }
-
-                    let mut key_hue = hue + (key.x + key.y) * 4.0;
-                    key_hue %= 360.0;
-
-                    colors.insert(idx as u8, Hsv::new(key_hue, 1.0, 1.0));
+                for effect in &mut effects {
+                    effect.update(delta_frame, &mut led_state, &matrix);
                 }
 
-                hue += 36.0 * delta_frame;
-                hue %= 360.0;
+                let mut colors: HashMap<u8, Hsv> = HashMap::new();
+
+                for (idx, led) in led_state.iter().enumerate() {
+                    if led.color != pre_state[idx].color {
+                        colors.insert(
+                            idx as u8,
+                            Hsv::new(
+                                led.color.hue,
+                                led.color.saturation,
+                                led.color.value * led.color.alpha,
+                            ),
+                        );
+                    }
+                }
 
                 for chunk in colors.into_iter().collect::<Vec<_>>().chunks(7) {
                     let colors: HashMap<u8, Hsv> = chunk.iter().copied().collect();
@@ -160,6 +186,7 @@ impl HIDThread {
                     delta_update,
                     delta_frame,
                     matrix: matrix.clone(),
+                    led_state: led_state.iter().map(|state| state.color).collect(),
                     layer_state,
                 })
                 .ok();

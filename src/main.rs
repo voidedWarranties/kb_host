@@ -11,6 +11,8 @@ mod ui;
 
 mod protocol;
 
+mod effects;
+
 const CONFIG_PATH: &str = "kb_host/config.json";
 const UPDATE_RATE: f32 = 240.0; // <5 ms per update
 const FPS: f32 = 20.0;

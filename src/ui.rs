@@ -5,7 +5,8 @@ use crate::{
 use crossbeam::channel::Receiver;
 use eframe::epaint::{RectShape, TextShape};
 use egui::{
-    text::LayoutJob, Color32, FontFamily, FontId, Painter, Pos2, Rect, Rounding, Stroke, Ui, Vec2,
+    color::Hsva, text::LayoutJob, Color32, FontFamily, FontId, Painter, Pos2, Rect, Rounding,
+    Stroke, Ui, Vec2,
 };
 use std::sync::Arc;
 
@@ -84,6 +85,10 @@ impl App {
                     ui.label(format!("{:#06X}", qmk_info.usb.pid));
                     ui.end_row();
 
+                    ui.label("LED count");
+                    ui.label(format!("{}", self.kb_config.led_count()));
+                    ui.end_row();
+
                     ui.label("HID delta update");
                     ui.label(format!("{:.2}", self.curr_state.delta_update * 1000.0));
                     ui.end_row();
@@ -119,7 +124,8 @@ impl App {
                 .expect("could not find key definition");
 
             let (bg_norm, bg_pressed, fg) = get_key_colors(&key_def.usage);
-            let bg = if self.curr_state.matrix[key.matrix.0 as usize][key.matrix.1 as usize].is_down
+            let bg = if self.curr_state.matrix[key.matrix.0 as usize][key.matrix.1 as usize]
+                .is_pressed
             {
                 bg_pressed
             } else {
@@ -127,17 +133,30 @@ impl App {
             };
 
             // bounds
-            let key_border = 0.05 * scale;
+            let key_border = 0.03 * scale;
             let key_shrink = Vec2::new(key_border, key_border);
 
             let key_min = Vec2::new(key.x * scale, key.y * scale) + key_shrink;
-            let key_max = Vec2::new(key_min.x + key.w * scale, key_min.y + key.h * scale) - key_shrink;
-
-            let text_margin = 0.1 * scale;
+            let key_max =
+                Vec2::new(key_min.x + key.w * scale, key_min.y + key.h * scale) - key_shrink;
 
             let key_rect = Rect {
                 min: key_min.to_pos2(),
                 max: key_max.to_pos2(),
+            };
+
+            // led
+            let led_index = self.kb_config.matrix[key.matrix.0 as usize][key.matrix.1 as usize];
+            let border_color = if led_index >= 0 {
+                let color = self.curr_state.led_state[led_index as usize];
+                Hsva::new(
+                    color.hue.to_degrees() / 360.0,
+                    color.saturation,
+                    color.value * color.alpha,
+                    1.0,
+                )
+            } else {
+                Hsva::new(0.0, 0.0, 0.0, 0.0)
             };
 
             let translate = clip_rect.left_top().to_vec2();
@@ -146,11 +165,13 @@ impl App {
                 rect: key_rect.translate(translate),
                 rounding: Rounding::same(0.1 * scale),
                 fill: bg,
-                stroke: Stroke::new(key_border, Color32::GRAY),
+                stroke: Stroke::new(key_border, border_color),
             });
 
             // legend
             if let Some(legend) = key_def.label.as_ref() {
+                let text_margin = 0.1 * scale;
+
                 let job = LayoutJob::simple(
                     legend.to_string(),
                     FontId::new(14.0, FontFamily::Proportional),
