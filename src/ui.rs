@@ -133,7 +133,7 @@ impl App {
             };
 
             // bounds
-            let key_border = 0.03 * scale;
+            let key_border = 0.04 * scale;
             let key_shrink = Vec2::new(key_border, key_border);
 
             let key_min = Vec2::new(key.x * scale, key.y * scale) + key_shrink;
@@ -162,7 +162,7 @@ impl App {
             let translate = clip_rect.left_top().to_vec2();
 
             painter.add(RectShape {
-                rect: key_rect.translate(translate),
+                rect: key_rect.translate(translate - key_shrink / 2.0),
                 rounding: Rounding::same(0.1 * scale),
                 fill: bg,
                 stroke: Stroke::new(key_border, border_color),
