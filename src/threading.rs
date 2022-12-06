@@ -26,6 +26,7 @@ pub struct HIDThreadState {
     pub delta_update: f32,
     pub delta_frame: f32,
     pub matrix: Vec<Vec<KeyState>>,
+    pub layer_state: u8,
 }
 
 pub struct HIDThread {
@@ -96,6 +97,8 @@ impl HIDThread {
             kb_config.rows() as usize
         ];
 
+        let mut layer_state: u8 = 0;
+
         let mut hue: f32 = 0.0;
 
         while !cancel.load(Ordering::Relaxed) {
@@ -114,7 +117,7 @@ impl HIDThread {
                         }
                     }
                     Some(ProtocolMessage::Layer(layer)) => {
-                        dbg!(layer);
+                        layer_state = layer.layer_state;
                     }
                     _ => {}
                 }
@@ -157,6 +160,7 @@ impl HIDThread {
                     delta_update,
                     delta_frame,
                     matrix: matrix.clone(),
+                    layer_state,
                 })
                 .ok();
 

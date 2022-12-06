@@ -29,6 +29,7 @@ pub struct KBConfig {
     pub host_config: Config,
     pub qmk_info: QMKInfo,
     pub matrix: LEDMatrix,
+    pub legends: KBLegends,
     width: f32,
     height: f32,
     rows: u8,
@@ -37,7 +38,12 @@ pub struct KBConfig {
 }
 
 impl KBConfig {
-    pub fn new(host_config: Config, qmk_info: QMKInfo, matrix: LEDMatrix) -> KBConfig {
+    pub fn new(
+        host_config: Config,
+        qmk_info: QMKInfo,
+        matrix: LEDMatrix,
+        legends: KBLegends,
+    ) -> KBConfig {
         let layout = Self::get_layout(&qmk_info, &host_config);
 
         let mut width: f32 = 0.0;
@@ -64,6 +70,7 @@ impl KBConfig {
             host_config,
             qmk_info,
             matrix,
+            legends,
             width,
             height,
             rows,
@@ -107,6 +114,7 @@ impl KBConfig {
 #[derive(Deserialize, Debug)]
 pub struct Config {
     pub kb: String,
+    pub keymap: String,
     pub layout: String,
     #[serde(deserialize_with = "deserialize_hex")]
     pub usage_page: u16,
@@ -153,3 +161,61 @@ pub struct QMKKey {
 }
 
 pub type LEDMatrix = Vec<Vec<i16>>;
+
+#[derive(Deserialize, Debug)]
+pub struct KBLegends(Vec<LayerDef>);
+
+impl KBLegends {
+    pub fn get_key(&self, layer_state: u8, row: u8, col: u8) -> Option<&KeyDef> {
+        for (idx, layer) in self.0.iter().rev().enumerate() {
+            let idx = self.0.len() - idx - 1;
+
+            if idx != 0 && layer_state & (1 << idx) == 0 {
+                continue;
+            }
+
+            let def = &layer.legends[row as usize][col as usize];
+            if let KeyUsage::Passthrough = def.usage {
+                continue;
+            }
+
+            return Some(def);
+        }
+
+        None
+    }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LayerDef {
+    layer_name: String,
+    legends: Vec<Vec<KeyDef>>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyUsage {
+    Removed,
+    Unused,
+    Passthrough,
+    Default,
+    Modtap,
+    Modifier,
+    Layertap,
+    Layer,
+    Function,
+    Mouse,
+}
+
+impl Default for KeyUsage {
+    fn default() -> Self {
+        KeyUsage::Default
+    }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct KeyDef {
+    #[serde(default)]
+    pub usage: KeyUsage,
+    pub label: Option<String>,
+}

@@ -16,6 +16,7 @@ const UPDATE_RATE: f32 = 240.0; // <5 ms per update
 const FPS: f32 = 20.0;
 
 fn read_config() -> Result<KBConfig, io::Error> {
+    // host configuration
     let config_contents = fs::read_to_string(
         dirs::config_dir()
             .expect("no config directory")
@@ -23,6 +24,7 @@ fn read_config() -> Result<KBConfig, io::Error> {
     )?;
     let config: Config = serde_json::from_str(&config_contents)?;
 
+    // info.json and matrix.json
     let keyboard_path = dirs::home_dir()
         .expect("no home directory")
         .join("qmk_firmware/keyboards")
@@ -34,7 +36,13 @@ fn read_config() -> Result<KBConfig, io::Error> {
     let matrix_contents = fs::read_to_string(keyboard_path.join("matrix.json"))?;
     let matrix: LEDMatrix = serde_json::from_str(&matrix_contents)?;
 
-    Ok(KBConfig::new(config, qmk_info, matrix))
+    // legends.json
+    let keymap_path = keyboard_path.join("keymaps").join(&config.keymap);
+
+    let legends_contents = fs::read_to_string(keymap_path.join("legends.json"))?;
+    let legends: KBLegends = serde_json::from_str(&legends_contents)?;
+
+    Ok(KBConfig::new(config, qmk_info, matrix, legends))
 }
 
 fn main() -> Result<(), io::Error> {

@@ -1,9 +1,11 @@
-use crate::{config::KBConfig, threading::HIDThreadState};
+use crate::{
+    config::{KBConfig, KeyUsage},
+    threading::HIDThreadState,
+};
 use crossbeam::channel::Receiver;
 use eframe::epaint::{RectShape, TextShape};
 use egui::{
-    text::LayoutJob, Align, Color32, FontFamily, FontId, Painter, Pos2, Rect, Rounding, Stroke,
-    TextFormat, Ui, Vec2,
+    text::LayoutJob, Color32, FontFamily, FontId, Painter, Pos2, Rect, Rounding, Stroke, Ui, Vec2,
 };
 use std::sync::Arc;
 
@@ -11,6 +13,41 @@ pub struct App {
     rx: Receiver<HIDThreadState>,
     kb_config: Arc<KBConfig>,
     curr_state: HIDThreadState,
+}
+
+const REMOVED_COLOR: Color32 = Color32::from_rgb(20, 20, 20);
+
+// unpressed, pressed, foreground
+fn get_key_colors(usage: &KeyUsage) -> (Color32, Color32, Color32) {
+    match usage {
+        KeyUsage::Removed => (REMOVED_COLOR, REMOVED_COLOR, Color32::TRANSPARENT),
+        KeyUsage::Modtap | KeyUsage::Modifier => (
+            Color32::from_rgb(68, 51, 127),
+            Color32::from_rgb(27, 20, 51),
+            Color32::WHITE,
+        ),
+        KeyUsage::Layertap | KeyUsage::Layer => (
+            Color32::from_rgb(127, 51, 51),
+            Color32::from_rgb(51, 20, 20),
+            Color32::WHITE,
+        ),
+        KeyUsage::Function => (
+            Color32::from_rgb(51, 57, 127),
+            Color32::from_rgb(20, 22, 51),
+            Color32::WHITE,
+        ),
+        KeyUsage::Mouse => (
+            Color32::from_rgb(51, 127, 100),
+            Color32::from_rgb(20, 51, 40),
+            Color32::WHITE,
+        ),
+        KeyUsage::Passthrough => unreachable!(),
+        _ => (
+            Color32::from_rgb(90, 90, 90),
+            Color32::from_rgb(50, 50, 50),
+            Color32::WHITE,
+        ),
+    }
 }
 
 impl App {
@@ -75,26 +112,32 @@ impl App {
         let painter = Painter::new(ui.ctx().clone(), ui.layer_id(), clip_rect);
 
         for key in &layout.layout {
-            let (fg, bg) =
-                if self.curr_state.matrix[key.matrix.0 as usize][key.matrix.1 as usize].is_down {
-                    (Color32::BLACK, Color32::GRAY)
-                } else {
-                    (Color32::BLACK, Color32::WHITE)
-                };
+            let key_def = self
+                .kb_config
+                .legends
+                .get_key(self.curr_state.layer_state, key.matrix.0, key.matrix.1)
+                .expect("could not find key definition");
 
-            let key_min = Pos2 {
-                x: key.x * scale,
-                y: key.y * scale,
+            let (bg_norm, bg_pressed, fg) = get_key_colors(&key_def.usage);
+            let bg = if self.curr_state.matrix[key.matrix.0 as usize][key.matrix.1 as usize].is_down
+            {
+                bg_pressed
+            } else {
+                bg_norm
             };
 
-            let key_max = Pos2 {
-                x: key_min.x + key.w * scale,
-                y: key_min.y + key.h * scale,
-            };
+            // bounds
+            let key_border = 0.05 * scale;
+            let key_shrink = Vec2::new(key_border, key_border);
+
+            let key_min = Vec2::new(key.x * scale, key.y * scale) + key_shrink;
+            let key_max = Vec2::new(key_min.x + key.w * scale, key_min.y + key.h * scale) - key_shrink;
+
+            let text_margin = 0.1 * scale;
 
             let key_rect = Rect {
-                min: key_min,
-                max: key_max,
+                min: key_min.to_pos2(),
+                max: key_max.to_pos2(),
             };
 
             let translate = clip_rect.left_top().to_vec2();
@@ -103,32 +146,28 @@ impl App {
                 rect: key_rect.translate(translate),
                 rounding: Rounding::same(0.1 * scale),
                 fill: bg,
-                stroke: Stroke::new(0.025 * scale, Color32::GRAY),
+                stroke: Stroke::new(key_border, Color32::GRAY),
             });
 
-            let mut job = LayoutJob::default();
-            job.append(
-                &key.label,
-                0.0,
-                TextFormat {
-                    font_id: FontId::new(14.0, FontFamily::Proportional),
-                    color: fg,
-                    valign: Align::Center,
-                    ..Default::default()
-                },
-            );
+            // legend
+            if let Some(legend) = key_def.label.as_ref() {
+                let job = LayoutJob::simple(
+                    legend.to_string(),
+                    FontId::new(14.0, FontFamily::Proportional),
+                    fg,
+                    key_rect.width() - 2.0 * text_margin,
+                );
 
-            let galley = ui.fonts().layout_job(job);
+                let galley = ui.fonts().layout_job(job);
 
-            let margin = 0.1 * scale;
-
-            painter.add(TextShape {
-                pos: key_min + Vec2::new(margin, margin) + translate,
-                galley,
-                underline: Stroke::none(),
-                override_text_color: None,
-                angle: 0.0,
-            });
+                painter.add(TextShape {
+                    pos: (key_min + Vec2::new(text_margin, text_margin) + translate).to_pos2(),
+                    galley,
+                    underline: Stroke::none(),
+                    override_text_color: None,
+                    angle: 0.0,
+                });
+            }
         }
 
         ui.expand_to_include_rect(painter.clip_rect());
